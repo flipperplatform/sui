@@ -41,24 +41,14 @@ services:
     environment:
       - RUST_LOG="info"
       - RUST_JSON_LOG="true"
-      - DATABASE_URL=postgres://postgres:admin@postgres:5432/sui_indexer_testnet
+      - DATABASE_URL=postgres://postgres:wKrepVoFdhali70iwHl4@sui-db.cnecsg0emuow.us-east-1.rds.amazonaws.com:5432/sui_indexer_mainnet
       - RPC_CLIENT_URL=http://fullnode:9000
     ports:
       - target: 9000
-        published: 9000
+        published: 9001
         protocol: tcp
-      - 9184
+      - target: 9184
+        published: 9185
+        protocol: tcp 
     depends_on:
-      - postgres
       - fullnode
-
-  postgres:
-    image: postgres:15
-    restart: unless-stopped
-    environment:
-      - POSTGRES_PASSWORD=admin
-    ports:
-      - target: 5432
-        published: 5432
-    volumes:
-      - ./postgres/data:/var/lib/postgresql/data

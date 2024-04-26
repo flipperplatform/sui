@@ -28,6 +28,7 @@ async fn main() -> Result<(), IndexerError> {
             e
         ))
     })?;
+    info!("get db url");
     let blocking_cp = new_pg_connection_pool(&db_url, None).map_err(|e| {
         error!(
             "Failed creating Postgres connection pool with error {:?}",
@@ -35,6 +36,7 @@ async fn main() -> Result<(), IndexerError> {
         );
         e
     })?;
+    info!("get pg connection");
     if indexer_config.reset_db {
         let mut conn = get_pg_pool_connection(&blocking_cp).map_err(|e| {
             error!(
@@ -69,8 +71,10 @@ async fn main() -> Result<(), IndexerError> {
 
     let report_cp = blocking_cp.clone();
     let report_metrics = indexer_metrics.clone();
+    print!("code check point");
     tokio::spawn(async move {
         loop {
+	    print!("looping");
             let cp_state = report_cp.state();
             info!(
                 "DB connection pool size: {}, with idle conn: {}.",

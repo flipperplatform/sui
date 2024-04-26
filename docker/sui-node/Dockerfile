@@ -26,7 +26,7 @@ ENV LD_PRELOAD /usr/lib/x86_64-linux-gnu/libjemalloc.so
 ARG PROFILE=release
 WORKDIR "$WORKDIR/sui"
 # Both bench and release profiles copy from release dir
-COPY --from=builder /sui/target/release/sui-node /opt/sui/bin/sui-node
+COPY --from=builder /sui/target/release/sui-node /opt/sui/bin
 # Support legacy usages of /usr/local/bin/sui-node
 COPY --from=builder /sui/target/release/sui-node /usr/local/bin
 

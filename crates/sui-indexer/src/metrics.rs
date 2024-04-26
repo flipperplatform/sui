@@ -61,7 +61,7 @@ async fn metrics(Extension(registry_service): Extension<RegistryService>) -> (St
 
 fn convert_url(url_str: &str) -> Option<String> {
     // NOTE: unwrap here is safe because the regex is a constant.
-    let re = Regex::new(r"https?://([a-z0-9-]+\.[a-z0-9-]+\.[a-z]+)").unwrap();
+    let re = Regex::new(r"https?://([a-z0-9-]+(?:\.[a-z0-9-]+)*)").unwrap();
     let captures = re.captures(url_str)?;
 
     captures.get(1).map(|m| m.as_str().to_string())
