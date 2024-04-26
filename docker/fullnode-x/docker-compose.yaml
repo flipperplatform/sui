@@ -34,6 +34,8 @@ services:
       context: ../..
       dockerfile: ./docker/sui-indexer/Dockerfile
     image: sui-indexer:latest
+    networks:
+      - networkName
     command: /opt/sui/indexer.sh
     restart: unless-stopped
     volumes:
@@ -62,3 +64,7 @@ services:
         published: 5432
     volumes:
       - ./postgres/data:/var/lib/postgresql/data
+networks:
+  networkName:
+    driver: bridge
+

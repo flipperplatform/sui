@@ -44,6 +44,8 @@ impl SuinsIndexerWorker {
         removals: &[String],
         checkpoint_seq_num: u64,
     ) -> Result<()> {
+        println!("Updates is empty: {}", updates.is_empty());
+        println!("Removals is empty: {}", removals.is_empty());
         if updates.is_empty() && removals.is_empty() {
             return Ok(());
         }
@@ -99,9 +101,10 @@ impl SuinsIndexerWorker {
 #[async_trait]
 impl Worker for SuinsIndexerWorker {
     async fn process_checkpoint(&self, checkpoint: CheckpointData) -> Result<()> {
+        
         let checkpoint_seq_number = checkpoint.checkpoint_summary.sequence_number;
         let (updates, removals) = self.indexer.process_checkpoint(&checkpoint);
-
+        dbg!(checkpoint, &updates,&removals, checkpoint_seq_number);
         self.commit_to_db(&updates, &removals, checkpoint_seq_number)?;
         Ok(())
     }
@@ -122,6 +125,7 @@ async fn main() -> Result<()> {
     println!("Starting indexer with checkpoints dir: {}", checkpoints_dir);
 
     let (_exit_sender, exit_receiver) = oneshot::channel();
+
     let progress_store = FileProgressStore::new(PathBuf::from(backfill_progress_file_path));
     let metrics = DataIngestionMetrics::new(&Registry::new());
     let mut executor = IndexerExecutor::new(progress_store, 1, metrics);

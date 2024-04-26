@@ -67,6 +67,7 @@ impl<P: ProgressStore> IndexerExecutor<P> {
         mut exit_receiver: oneshot::Receiver<()>,
     ) -> Result<ExecutorProgress> {
         let mut reader_checkpoint_number = self.progress_store.min_watermark()?;
+        
         let (checkpoint_reader, mut checkpoint_recv, gc_sender, _exit_sender) =
             CheckpointReader::initialize(
                 path,

@@ -62,8 +62,14 @@ impl CheckpointReader {
     /// Represents a single iteration of the reader.
     /// Reads files in a local directory, validates them, and forwards `CheckpointData` to the executor.
     async fn read_local_files(&self) -> Result<Vec<CheckpointData>> {
+        
         let mut files = vec![];
+
+        let dir_entries = fs::read_dir(self.path.clone())?;
+        let num_entries = dir_entries.count();
+        println!("Number of entries in directory {:?}: {}", self.path, num_entries);
         for entry in fs::read_dir(self.path.clone())? {
+            println!("Self path");
             let entry = entry?;
             let filename = entry.file_name();
             if let Some(sequence_number) = Self::checkpoint_number_from_file_path(&filename) {
@@ -180,13 +186,17 @@ impl CheckpointReader {
                 .map_err(backoff::Error::transient)
         })
         .await?;
-
+  
+    
+        // println!("First checkpoint sequence number: {:?}", checkpoints[0].checkpoint_summary.sequence_number);
+        // println!("Current checkpoint number: {}", self.current_checkpoint_number);
         if self.remote_store_url.is_some()
             && (checkpoints.is_empty()
                 || checkpoints[0].checkpoint_summary.sequence_number
                     > self.current_checkpoint_number)
         {
             checkpoints = self.remote_fetch();
+
         } else {
             // cancel remote fetcher execution because local reader has made progress
             self.remote_fetcher_receiver = None;
