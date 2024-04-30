@@ -25,7 +25,7 @@ authority-store-pruning-config:
   # No pruning of object versions (use u64::max for num of epochs)
   num-epochs-to-retain: 18446744073709551615
   # Prune historic transactions of the past epochs
-  num-epochs-to-retain-for-checkpoints: 2
+  num-epochs-to-retain-for-checkpoints: 18446744073709551615
   periodic-compaction-threshold-days: 1
 
 p2p-config:
