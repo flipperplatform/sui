@@ -7,18 +7,26 @@ metrics-address: "0.0.0.0:9184"
 # this address is also used for web socket connections
 json-rpc-address: "0.0.0.0:9000"
 enable-event-processing: true
+enable-index-processing: true
+enable-experimental-rest-api: true
 
 genesis:
   # Update this to the location of where the genesis file is stored
   genesis-file-location: "/opt/sui/config/genesis.blob"
 
 authority-store-pruning-config:
+  # default values
   num-latest-epoch-dbs-to-retain: 3
   epoch-db-pruning-period-secs: 3600
-  num-epochs-to-retain: 1
   max-checkpoints-in-batch: 10
   max-transactions-in-batch: 1000
-  pruning-run-delay-seconds: 60
+  # end of default values
+
+  # No pruning of object versions (use u64::max for num of epochs)
+  num-epochs-to-retain: 18446744073709551615
+  # Prune historic transactions of the past epochs
+  num-epochs-to-retain-for-checkpoints: 2
+  periodic-compaction-threshold-days: 1
 
 p2p-config:
   seed-peers:

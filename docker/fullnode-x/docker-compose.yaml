@@ -49,6 +49,6 @@ services:
         protocol: tcp
       - target: 9184
         published: 9185
-        protocol: tcp 
+        protocol: tcp
     depends_on:
       - fullnode
