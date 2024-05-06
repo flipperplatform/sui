@@ -39,5 +39,7 @@ COPY ./indexer.sh ./indexer.sh
 # Ensure the script is executable
 RUN chmod +x ./indexer.sh
 
+EXPOSE 9000
+
 # Command to run when starting the container
 CMD ["./indexer.sh"]
