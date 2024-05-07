@@ -1,0 +1,27 @@
+steps:
+  # Build the Docker image using a private pool
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/shadow-sui-indexer/sui-indexer:$GIT_REVISION', '--build-arg', 'GIT_REVISION=$GIT_REVISION', '--file', 'Dockerfile', '.']
+    id: 'build'
+    env:
+      - 'WORKDIR=/workspace'
+    waitFor: ['-']
+
+  # Push the Docker image to Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/shadow-sui-indexer/sui-indexer:$GIT_REVISION']
+    id: 'push'
+    waitFor: ['build']
+
+images:
+  - 'gcr.io/shadow-sui-indexer/sui-indexer:$GIT_REVISION'
+
+# Use a private pool called cloud-build-machine
+options:
+  machineType: 'E2_HIGHMEM_16'
+  pool:
+    name: 'projects/shadow-sui-indexer/locations/us-central1/workerpools/cloud-build-machine'
+  diskSizeGb: 100
+
+substitutions:
+  _GIT_REVISION: 'latest'
