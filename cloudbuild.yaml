@@ -18,10 +18,8 @@ images:
 
 # Use a private pool called cloud-build-machine
 options:
-  machineType: 'E2_HIGHMEM_16'
   pool:
     name: 'projects/shadow-sui-indexer/locations/us-central1/workerpools/cloud-build-machine'
-  diskSizeGb: 100
 
 substitutions:
   _GIT_REVISION: 'latest'
