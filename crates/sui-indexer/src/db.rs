@@ -22,9 +22,9 @@ pub struct PgConnectionPoolConfig {
 }
 
 impl PgConnectionPoolConfig {
-    const DEFAULT_POOL_SIZE: u32 = 100;
-    const DEFAULT_CONNECTION_TIMEOUT: u64 = 3600;
-    const DEFAULT_STATEMENT_TIMEOUT: u64 = 3600;
+    const DEFAULT_POOL_SIZE: u32 = 10;
+    const DEFAULT_CONNECTION_TIMEOUT: u64 = 30;
+    const DEFAULT_STATEMENT_TIMEOUT: u64 = 60;
 
     fn connection_config(&self) -> PgConnectionConfig {
         PgConnectionConfig {
