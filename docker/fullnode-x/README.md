@@ -1,4 +1,5 @@
 
+# Official Docs
 0. Build the containers locally to your desktop/laptop with:
    - `docker compose build`
       - The build process can take a while to complete.
@@ -19,3 +20,27 @@
 
 	- You will see the indexer catching up checkpoint by checkpoint until it's up to date and ready to serve requests.
 	  `docker compose logs indexer | tail -30`
+
+
+# Full Node VM Management
+[VM Link](https://console.cloud.google.com/compute/instancesDetail/zones/us-central1-a/instances/sui-indexer?project=shadow-sui-indexer)
+## Use of disk
+The virtual machine is mounted on a Hyperdisk Throughput, which supports capacity expansion without stopping the service.
+
+* To resize the disk, check [doc](https://cloud.google.com/compute/docs/disks/resize-persistent-disk#gcloud).
+* Docker-compose file location:
+```shell
+cd /mnt/disks/sdb/sui/docker/fullnode-x/
+```
+* to start all services
+```shell
+docker compose up -d
+```
+* to stop all services
+```shell
+docker compose down
+```
+
+
+   
+
