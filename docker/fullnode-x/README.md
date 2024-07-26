@@ -28,10 +28,21 @@
 The virtual machine is mounted on a Hyperdisk Throughput, which supports capacity expansion without stopping the service.
 
 * To resize the disk, check [doc](https://cloud.google.com/compute/docs/disks/resize-persistent-disk#gcloud).
+1. First use gcloud to increase the disk space.
+```shell
+gcloud compute disks resize sui-full-node --size 8TB --zone us-central1-a
+```
+2. Use 'lsblk' in the virtual machine to check that the hard disk has been expanded, and use 'df -h' to check that the hard disk has not been repartitioned and is still the old size.
 ```shell
 lsblk
 df -h
+```
+3. Repartition using the following command
+```shell
 sudo resize2fs /dev/sdb
+```
+4. Check whether the disk expansion is successful
+```shell
 df -h
 ```
 * Docker-compose file location:
