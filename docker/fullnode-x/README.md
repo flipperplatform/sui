@@ -28,6 +28,12 @@
 The virtual machine is mounted on a Hyperdisk Throughput, which supports capacity expansion without stopping the service.
 
 * To resize the disk, check [doc](https://cloud.google.com/compute/docs/disks/resize-persistent-disk#gcloud).
+```shell
+lsblk
+df -h
+sudo resize2fs /dev/sdb
+df -h
+```
 * Docker-compose file location:
 ```shell
 cd /mnt/disks/sdb/sui/docker/fullnode-x/
