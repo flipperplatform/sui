@@ -16,6 +16,7 @@ use super::sui_address::SuiAddress;
 use super::suins_registration::{DomainFormat, SuinsRegistration};
 use super::transaction_block::{self, TransactionBlock, TransactionBlockFilter};
 use super::type_filter::ExactTypeFilter;
+use super::uint53::UInt53;
 use crate::data::Db;
 use crate::error::Error;
 use async_graphql::connection::Connection;
@@ -139,7 +140,7 @@ impl CoinMetadata {
             .await
     }
 
-    pub(crate) async fn version(&self) -> u64 {
+    pub(crate) async fn version(&self) -> UInt53 {
         ObjectImpl(&self.super_.super_).version().await
     }
 
@@ -233,7 +234,7 @@ impl CoinMetadata {
         name: DynamicFieldName,
     ) -> Result<Option<DynamicField>> {
         OwnerImpl::from(&self.super_.super_)
-            .dynamic_field(ctx, name, Some(self.super_.super_.version_impl()))
+            .dynamic_field(ctx, name, Some(self.super_.root_version()))
             .await
     }
 
@@ -250,7 +251,7 @@ impl CoinMetadata {
         name: DynamicFieldName,
     ) -> Result<Option<DynamicField>> {
         OwnerImpl::from(&self.super_.super_)
-            .dynamic_object_field(ctx, name, Some(self.super_.super_.version_impl()))
+            .dynamic_object_field(ctx, name, Some(self.super_.root_version()))
             .await
     }
 
@@ -273,7 +274,7 @@ impl CoinMetadata {
                 after,
                 last,
                 before,
-                Some(self.super_.super_.version_impl()),
+                Some(self.super_.root_version()),
             )
             .await
     }
@@ -309,9 +310,13 @@ impl CoinMetadata {
             return Ok(None);
         };
 
-        let supply = CoinMetadata::query_total_supply(ctx.data_unchecked(), coin_type)
-            .await
-            .extend()?;
+        let supply = CoinMetadata::query_total_supply(
+            ctx.data_unchecked(),
+            coin_type,
+            self.super_.super_.checkpoint_viewed_at,
+        )
+        .await
+        .extend()?;
 
         Ok(supply.map(BigInt::from))
     }
@@ -319,15 +324,20 @@ impl CoinMetadata {
 
 impl CoinMetadata {
     /// Read a `CoinMetadata` from the `db` for the coin whose inner type is `coin_type`.
-    pub(crate) async fn query(db: &Db, coin_type: TypeTag) -> Result<Option<CoinMetadata>, Error> {
+    pub(crate) async fn query(
+        db: &Db,
+        coin_type: TypeTag,
+        checkpoint_viewed_at: u64,
+    ) -> Result<Option<CoinMetadata>, Error> {
         let TypeTag::Struct(coin_struct) = coin_type else {
             // If the type supplied is not metadata, we know it's not a valid coin type, so there
             // won't be CoinMetadata for it.
             return Ok(None);
         };
 
-        let metadata_type = NativeCoinMetadata::type_(*coin_struct).into();
-        let Some(object) = Object::query_singleton(db, metadata_type).await? else {
+        let metadata_type = NativeCoinMetadata::type_(*coin_struct);
+        let Some(object) = Object::query_singleton(db, metadata_type, checkpoint_viewed_at).await?
+        else {
             return Ok(None);
         };
 
@@ -351,6 +361,7 @@ impl CoinMetadata {
     pub(crate) async fn query_total_supply(
         db: &Db,
         coin_type: TypeTag,
+        checkpoint_viewed_at: u64,
     ) -> Result<Option<u64>, Error> {
         let TypeTag::Struct(coin_struct) = coin_type else {
             // If the type supplied is not metadata, we know it's not a valid coin type, so there
@@ -361,8 +372,9 @@ impl CoinMetadata {
         Ok(Some(if GAS::is_gas(coin_struct.as_ref()) {
             TOTAL_SUPPLY_SUI
         } else {
-            let cap_type = TreasuryCap::type_(*coin_struct).into();
-            let Some(object) = Object::query_singleton(db, cap_type).await? else {
+            let cap_type = TreasuryCap::type_(*coin_struct);
+            let Some(object) = Object::query_singleton(db, cap_type, checkpoint_viewed_at).await?
+            else {
                 return Ok(None);
             };
 

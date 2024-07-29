@@ -41,7 +41,6 @@ use crate::{
     get_balance_changes_from_effect, get_object_changes, with_tracing, ObjectProviderCache,
     SuiRpcModule,
 };
-use std::net::SocketAddr;
 
 pub struct TransactionExecutionApi {
     state: Arc<dyn StateRead>,
@@ -136,7 +135,6 @@ impl TransactionExecutionApi {
         signatures: Vec<Base64>,
         opts: Option<SuiTransactionBlockResponseOptions>,
         request_type: Option<ExecuteTransactionRequestType>,
-        client_addr: Option<SocketAddr>,
     ) -> Result<SuiTransactionBlockResponse, Error> {
         let (opts, request_type, sender, input_objs, txn, transaction, raw_transaction) =
             self.prepare_execute_transaction_block(tx_bytes, signatures, opts, request_type)?;
@@ -149,7 +147,7 @@ impl TransactionExecutionApi {
                 transaction: txn,
                 request_type,
             },
-            client_addr,
+            None,
         ))
         .await?
         .map_err(Error::from)?;
@@ -302,25 +300,13 @@ impl WriteApiServer for TransactionExecutionApi {
     #[instrument(skip(self))]
     async fn execute_transaction_block(
         &self,
-        _tx_bytes: Base64,
-        _signatures: Vec<Base64>,
-        _opts: Option<SuiTransactionBlockResponseOptions>,
-        _request_type: Option<ExecuteTransactionRequestType>,
-    ) -> RpcResult<SuiTransactionBlockResponse> {
-        unimplemented!("Use monitored_execute_transaction_block instead")
-    }
-
-    #[instrument(skip(self))]
-    async fn monitored_execute_transaction_block(
-        &self,
         tx_bytes: Base64,
         signatures: Vec<Base64>,
         opts: Option<SuiTransactionBlockResponseOptions>,
         request_type: Option<ExecuteTransactionRequestType>,
-        client_addr: Option<SocketAddr>,
     ) -> RpcResult<SuiTransactionBlockResponse> {
         with_tracing!(Duration::from_secs(10), async move {
-            self.execute_transaction_block(tx_bytes, signatures, opts, request_type, client_addr)
+            self.execute_transaction_block(tx_bytes, signatures, opts, request_type)
                 .await
         })
     }

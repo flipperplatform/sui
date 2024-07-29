@@ -211,7 +211,7 @@ fn unreachable_code(loc: Loc) -> Option<ControlFlow> {
 
 pub fn program(compilation_env: &mut CompilationEnv, prog: &T::Program) {
     let mut context = Context::new(compilation_env);
-    modules(&mut context, &prog.inner.modules);
+    modules(&mut context, &prog.modules);
 }
 
 fn modules(context: &mut Context, modules: &UniqueMap<ModuleIdent, T::ModuleDefinition>) {
@@ -348,7 +348,12 @@ fn tail(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
             }
             None
         }
-        E::VariantMatch(..) => panic!("ICE should not have a variant match in this position."),
+        E::VariantMatch(..) => {
+            context
+                .env
+                .add_diag(ice!((*eloc, "Found variant match in detect_dead_code")));
+            None
+        }
 
         // Whiles and loops Loops are currently moved to statement position
         E::While(_, _, _) | E::Loop { .. } => statement(context, e),
@@ -472,7 +477,12 @@ fn value(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
             }
             None
         }
-        E::VariantMatch(..) => panic!("ICE should not have a variant match in this position."),
+        E::VariantMatch(_subject, _, _arms) => {
+            context
+                .env
+                .add_diag(ice!((*eloc, "Found variant match in detect_dead_code")));
+            None
+        }
         E::While(..) | E::Loop { .. } => statement(context, e),
         E::NamedBlock(name, (_, seq)) => {
             // a named block in value position checks if the body exits that block; if so, at least
@@ -544,7 +554,7 @@ fn value(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
         | E::Constant(_, _)
         | E::Move { .. }
         | E::Copy { .. }
-        | E::ErrorConstant(_) => None,
+        | E::ErrorConstant { .. } => None,
 
         // -----------------------------------------------------------------------------------------
         //  statements
@@ -647,8 +657,12 @@ fn statement(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
                 }
             }
         }
-        E::VariantMatch(..) => panic!("ICE should not have a variant match in this position."),
-
+        E::VariantMatch(_subject, _, _arms) => {
+            context
+                .env
+                .add_diag(ice!((*eloc, "Found variant match in detect_dead_code")));
+            None
+        }
         E::While(_, test, body) => {
             if let Some(test_control_flow) = value(context, test) {
                 context.report_value_error(test_control_flow);
@@ -743,7 +757,7 @@ fn statement(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
         | E::Annotate(_, _)
         | E::BorrowLocal(_, _)
         | E::Constant(_, _)
-        | E::ErrorConstant(_)
+        | E::ErrorConstant { .. }
         | E::Move { .. }
         | E::Copy { .. }
         | E::UnresolvedError => value(context, e),

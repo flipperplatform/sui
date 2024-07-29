@@ -13,6 +13,7 @@ use sui_types::transaction::{TransactionData, TransactionKind};
 use sui_types::{gas_coin::GAS, transaction::TransactionDataAPI, TypeTag};
 
 use super::suins_registration::NameService;
+use super::uint53::UInt53;
 use super::{
     address::Address,
     available_range::AvailableRange,
@@ -26,7 +27,7 @@ use super::{
     epoch::Epoch,
     event::{self, Event, EventFilter},
     move_type::MoveType,
-    object::{self, Object, ObjectFilter, ObjectLookupKey},
+    object::{self, Object, ObjectFilter},
     owner::Owner,
     protocol_config::ProtocolConfigs,
     sui_address::SuiAddress,
@@ -35,14 +36,12 @@ use super::{
     transaction_metadata::TransactionMetadata,
     type_filter::ExactTypeFilter,
 };
-use crate::consistency::consistent_range;
-use crate::data::QueryExecutor;
 use crate::server::watermark_task::Watermark;
 use crate::types::base64::Base64 as GraphQLBase64;
 use crate::types::zklogin_verify_signature::verify_zklogin_signature;
 use crate::types::zklogin_verify_signature::ZkLoginIntentScope;
 use crate::types::zklogin_verify_signature::ZkLoginVerifyResult;
-use crate::{config::ServiceConfig, data::Db, error::Error, mutation::Mutation};
+use crate::{config::ServiceConfig, error::Error, mutation::Mutation};
 
 pub(crate) struct Query;
 pub(crate) type SuiGraphQLSchema = async_graphql::Schema<Query, Mutation, EmptySubscription>;
@@ -62,19 +61,9 @@ impl Query {
     /// that can be tied to a particular checkpoint).
     async fn available_range(&self, ctx: &Context<'_>) -> Result<AvailableRange> {
         let Watermark { checkpoint, .. } = *ctx.data()?;
-        let result = ctx
-            .data_unchecked::<Db>()
-            .execute(move |conn| consistent_range(conn, Some(checkpoint)))
+        AvailableRange::query(ctx.data_unchecked(), checkpoint)
             .await
-            .extend()?;
-
-        match result {
-            Some((first, last)) => Ok(AvailableRange { first, last }),
-            None => Err(Error::Internal(
-                "Checkpoint watermark outside of available range from database".to_string(),
-            )
-            .extend()),
-        }
+            .extend()
     }
 
     /// Configuration for this RPC service
@@ -187,12 +176,32 @@ impl Query {
         DryRunResult::try_from(res).extend()
     }
 
-    async fn owner(&self, ctx: &Context<'_>, address: SuiAddress) -> Result<Option<Owner>> {
+    /// Look up an Owner by its SuiAddress.
+    ///
+    /// `rootVersion` represents the version of the root object in some nested chain of dynamic
+    /// fields. It allows consistent historical queries for the case of wrapped objects, which don't
+    /// have a version. For example, if querying the dynamic field of a table wrapped in a parent
+    /// object, passing the parent object's version here will ensure we get the dynamic field's
+    /// state at the moment that parent's version was created.
+    ///
+    /// Also, if this Owner is an object itself, `rootVersion` will be used to bound its version
+    /// from above when querying `Owner.asObject`. This can be used, for example, to get the
+    /// contents of a dynamic object field when its parent was at `rootVersion`.
+    ///
+    /// If `rootVersion` is omitted, dynamic fields will be from a consistent snapshot of the Sui
+    /// state at the latest checkpoint known to the GraphQL RPC. Similarly, `Owner.asObject` will
+    /// return the object's version at the latest checkpoint.
+    async fn owner(
+        &self,
+        ctx: &Context<'_>,
+        address: SuiAddress,
+        root_version: Option<u64>,
+    ) -> Result<Option<Owner>> {
         let Watermark { checkpoint, .. } = *ctx.data()?;
-
         Ok(Some(Owner {
             address,
-            checkpoint_viewed_at: Some(checkpoint),
+            checkpoint_viewed_at: checkpoint,
+            root_version,
         }))
     }
 
@@ -202,28 +211,19 @@ impl Query {
         &self,
         ctx: &Context<'_>,
         address: SuiAddress,
-        version: Option<u64>,
+        version: Option<UInt53>,
     ) -> Result<Option<Object>> {
         let Watermark { checkpoint, .. } = *ctx.data()?;
 
         match version {
-            Some(version) => Object::query(
-                ctx.data_unchecked(),
-                address,
-                ObjectLookupKey::VersionAt {
-                    version,
-                    checkpoint_viewed_at: Some(checkpoint),
-                },
-            )
-            .await
-            .extend(),
-            None => Object::query(
-                ctx.data_unchecked(),
-                address,
-                ObjectLookupKey::LatestAt(checkpoint),
-            )
-            .await
-            .extend(),
+            Some(version) => {
+                Object::query(ctx, address, Object::at_version(version.into(), checkpoint))
+                    .await
+                    .extend()
+            }
+            None => Object::query(ctx, address, Object::latest_at(checkpoint))
+                .await
+                .extend(),
         }
     }
 
@@ -233,7 +233,7 @@ impl Query {
 
         Ok(Some(Address {
             address,
-            checkpoint_viewed_at: Some(checkpoint),
+            checkpoint_viewed_at: checkpoint,
         }))
     }
 
@@ -248,10 +248,11 @@ impl Query {
     }
 
     /// Fetch epoch information by ID (defaults to the latest epoch).
-    async fn epoch(&self, ctx: &Context<'_>, id: Option<u64>) -> Result<Option<Epoch>> {
+    async fn epoch(&self, ctx: &Context<'_>, id: Option<UInt53>) -> Result<Option<Epoch>> {
         let Watermark { checkpoint, .. } = *ctx.data()?;
-
-        Epoch::query(ctx, id, Some(checkpoint)).await.extend()
+        Epoch::query(ctx, id.map(|id| id.into()), checkpoint)
+            .await
+            .extend()
     }
 
     /// Fetch checkpoint information by sequence number or digest (defaults to the latest available
@@ -262,8 +263,7 @@ impl Query {
         id: Option<CheckpointId>,
     ) -> Result<Option<Checkpoint>> {
         let Watermark { checkpoint, .. } = *ctx.data()?;
-
-        Checkpoint::query(ctx, id.unwrap_or_default(), Some(checkpoint))
+        Checkpoint::query(ctx, id.unwrap_or_default(), checkpoint)
             .await
             .extend()
     }
@@ -275,8 +275,7 @@ impl Query {
         digest: Digest,
     ) -> Result<Option<TransactionBlock>> {
         let Watermark { checkpoint, .. } = *ctx.data()?;
-
-        TransactionBlock::query(ctx.data_unchecked(), digest, Some(checkpoint))
+        TransactionBlock::query(ctx, digest, checkpoint)
             .await
             .extend()
     }
@@ -303,7 +302,7 @@ impl Query {
             page,
             coin,
             /* owner */ None,
-            Some(checkpoint),
+            checkpoint,
         )
         .await
         .extend()
@@ -325,7 +324,7 @@ impl Query {
             ctx.data_unchecked(),
             page,
             /* epoch */ None,
-            Some(checkpoint),
+            checkpoint,
         )
         .await
         .extend()
@@ -348,7 +347,7 @@ impl Query {
             ctx.data_unchecked(),
             page,
             filter.unwrap_or_default(),
-            Some(checkpoint),
+            checkpoint,
         )
         .await
         .extend()
@@ -371,7 +370,7 @@ impl Query {
             ctx.data_unchecked(),
             page,
             filter.unwrap_or_default(),
-            Some(checkpoint),
+            checkpoint,
         )
         .await
         .extend()
@@ -394,7 +393,7 @@ impl Query {
             ctx.data_unchecked(),
             page,
             filter.unwrap_or_default(),
-            Some(checkpoint),
+            checkpoint,
         )
         .await
         .extend()
@@ -405,9 +404,9 @@ impl Query {
     async fn protocol_config(
         &self,
         ctx: &Context<'_>,
-        protocol_version: Option<u64>,
+        protocol_version: Option<UInt53>,
     ) -> Result<ProtocolConfigs> {
-        ProtocolConfigs::query(ctx.data_unchecked(), protocol_version)
+        ProtocolConfigs::query(ctx.data_unchecked(), protocol_version.map(|v| v.into()))
             .await
             .extend()
     }
@@ -419,16 +418,14 @@ impl Query {
         domain: Domain,
     ) -> Result<Option<Address>> {
         let Watermark { checkpoint, .. } = *ctx.data()?;
-        Ok(
-            NameService::resolve_to_record(ctx, &domain, Some(checkpoint))
-                .await
-                .extend()?
-                .and_then(|r| r.target_address)
-                .map(|a| Address {
-                    address: a.into(),
-                    checkpoint_viewed_at: Some(checkpoint),
-                }),
-        )
+        Ok(NameService::resolve_to_record(ctx, &domain, checkpoint)
+            .await
+            .extend()?
+            .and_then(|r| r.target_address)
+            .map(|a| Address {
+                address: a.into(),
+                checkpoint_viewed_at: checkpoint,
+            }))
     }
 
     /// The coin metadata associated with the given coin type.
@@ -437,7 +434,8 @@ impl Query {
         ctx: &Context<'_>,
         coin_type: ExactTypeFilter,
     ) -> Result<Option<CoinMetadata>> {
-        CoinMetadata::query(ctx.data_unchecked(), coin_type.0)
+        let Watermark { checkpoint, .. } = *ctx.data()?;
+        CoinMetadata::query(ctx.data_unchecked(), coin_type.0, checkpoint)
             .await
             .extend()
     }

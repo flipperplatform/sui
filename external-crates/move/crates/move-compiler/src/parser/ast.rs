@@ -176,12 +176,19 @@ pub struct ModuleIdent_ {
 pub type ModuleIdent = Spanned<ModuleIdent_>;
 
 #[derive(Debug, Clone)]
+pub enum ModuleDefinitionMode {
+    Braces,
+    Semicolon,
+}
+
+#[derive(Debug, Clone)]
 pub struct ModuleDefinition {
     pub attributes: Vec<Attributes>,
     pub loc: Loc,
     pub address: Option<LeadingNameAccess>,
     pub name: ModuleName,
     pub is_spec_module: bool,
+    pub definition_mode: ModuleDefinitionMode,
     pub members: Vec<ModuleMember>,
 }
 
@@ -356,6 +363,8 @@ pub struct RootPathEntry {
 pub struct NamePath {
     pub root: RootPathEntry,
     pub entries: Vec<PathEntry>,
+    // if parsing of this name path was incomplete
+    pub is_incomplete: bool,
 }
 
 // See the NameAccess trait below for usage.
@@ -624,6 +633,8 @@ pub enum Exp_ {
     // Internal node marking an error was added to the error list
     // This is here so the pass can continue even when an error is hit
     UnresolvedError,
+    // e.X, where X is not a valid tok after dot and cannot be parsed (includes location of the dot)
+    DotUnresolved(Loc, Box<Exp>),
 }
 pub type Exp = Spanned<Exp_>;
 
@@ -754,6 +765,7 @@ impl NameAccessChain_ {
         NamePath {
             root,
             entries: vec![],
+            is_incomplete: false,
         }
     }
 }
@@ -975,6 +987,13 @@ impl Definition {
         match self {
             Definition::Module(m) => m.loc.file_hash(),
             Definition::Address(a) => a.loc.file_hash(),
+        }
+    }
+
+    pub fn name_loc(&self) -> Loc {
+        match self {
+            Definition::Module(mdef) => mdef.name.loc(),
+            Definition::Address(aref) => aref.addr.loc,
         }
     }
 }
@@ -1413,6 +1432,7 @@ impl AstDebug for ModuleDefinition {
             name,
             is_spec_module,
             members,
+            definition_mode: _,
         } = self;
         attributes.ast_debug(w);
         match address {
@@ -1832,12 +1852,22 @@ impl AstDebug for PathEntry {
 
 impl AstDebug for NamePath {
     fn ast_debug(&self, w: &mut AstWriter) {
-        let NamePath { root, entries } = self;
+        let NamePath {
+            root,
+            entries,
+            is_incomplete,
+        } = self;
         w.write(format!("{}::", root));
         w.list(entries, "::", |w, e| {
             e.ast_debug(w);
             false
         });
+        if *is_incomplete {
+            if !entries.is_empty() {
+                w.write("::");
+            }
+            w.write("_#incomplete#_");
+        }
     }
 }
 
@@ -2103,6 +2133,10 @@ impl AstDebug for Exp_ {
                 w.write(&s.value);
             }
             E::UnresolvedError => w.write("_|_"),
+            E::DotUnresolved(_, e) => {
+                e.ast_debug(w);
+                w.write(".");
+            }
         }
     }
 }

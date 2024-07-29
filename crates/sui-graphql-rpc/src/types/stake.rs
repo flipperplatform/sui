@@ -17,6 +17,7 @@ use super::owner::OwnerImpl;
 use super::suins_registration::{DomainFormat, SuinsRegistration};
 use super::transaction_block::{self, TransactionBlock, TransactionBlockFilter};
 use super::type_filter::ExactTypeFilter;
+use super::uint53::UInt53;
 use super::{
     big_int::BigInt, epoch::Epoch, move_object::MoveObject, object, sui_address::SuiAddress,
 };
@@ -158,7 +159,7 @@ impl StakedSui {
             .await
     }
 
-    pub(crate) async fn version(&self) -> u64 {
+    pub(crate) async fn version(&self) -> UInt53 {
         ObjectImpl(&self.super_.super_).version().await
     }
 
@@ -252,7 +253,7 @@ impl StakedSui {
         name: DynamicFieldName,
     ) -> Result<Option<DynamicField>> {
         OwnerImpl::from(&self.super_.super_)
-            .dynamic_field(ctx, name, Some(self.super_.super_.version_impl()))
+            .dynamic_field(ctx, name, Some(self.super_.root_version()))
             .await
     }
 
@@ -269,7 +270,7 @@ impl StakedSui {
         name: DynamicFieldName,
     ) -> Result<Option<DynamicField>> {
         OwnerImpl::from(&self.super_.super_)
-            .dynamic_object_field(ctx, name, Some(self.super_.super_.version_impl()))
+            .dynamic_object_field(ctx, name, Some(self.super_.root_version()))
             .await
     }
 
@@ -292,7 +293,7 @@ impl StakedSui {
                 after,
                 last,
                 before,
-                Some(self.super_.super_.version_impl()),
+                Some(self.super_.root_version()),
             )
             .await
     }
@@ -362,14 +363,13 @@ impl StakedSui {
     /// for `Object`, and is further filtered to a particular `owner`.
     ///
     /// `checkpoint_viewed_at` represents the checkpoint sequence number at which this page was
-    /// queried for, or `None` if the data was requested at the latest checkpoint. Each entity
-    /// returned in the connection will inherit this checkpoint, so that when viewing that entity's
-    /// state, it will be as if it was read at the same checkpoint.
+    /// queried for. Each entity returned in the connection will inherit this checkpoint, so that
+    /// when viewing that entity's state, it will be as if it was read at the same checkpoint.
     pub(crate) async fn paginate(
         db: &Db,
         page: Page<object::Cursor>,
         owner: SuiAddress,
-        checkpoint_viewed_at: Option<u64>,
+        checkpoint_viewed_at: u64,
     ) -> Result<Connection<String, StakedSui>, Error> {
         let type_: StructTag = MoveObjectType::staked_sui().into();
 

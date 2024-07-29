@@ -1,22 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::Duration;
-
 use consensus_config::{AuthorityIndex, Epoch, Stake};
 use fastcrypto::error::FastCryptoError;
+use strum_macros::IntoStaticStr;
 use thiserror::Error;
 use typed_store::TypedStoreError;
 
 use crate::{
-    block::{BlockRef, BlockTimestampMs, Round},
-    commit::Commit,
-    CommitIndex,
+    block::{BlockRef, Round},
+    commit::{Commit, CommitIndex},
 };
 
 /// Errors that can occur when processing blocks, reading from storage, or encountering shutdown.
-#[derive(Clone, Debug, Error)]
-pub enum ConsensusError {
+#[derive(Clone, Debug, Error, IntoStaticStr)]
+pub(crate) enum ConsensusError {
     #[error("Error deserializing block: {0}")]
     MalformedBlock(bcs::Error),
 
@@ -38,8 +36,25 @@ pub enum ConsensusError {
     #[error("Genesis blocks should not be queried!")]
     UnexpectedGenesisBlockRequested,
 
+    #[error(
+        "Expected {requested} but received {received} blocks returned from authority {authority}"
+    )]
+    UnexpectedNumberOfBlocksFetched {
+        authority: AuthorityIndex,
+        requested: usize,
+        received: usize,
+    },
+
     #[error("Unexpected block returned while fetching missing blocks")]
     UnexpectedFetchedBlock {
+        index: AuthorityIndex,
+        block_ref: BlockRef,
+    },
+
+    #[error(
+        "Unexpected block {block_ref} returned while fetching last own block from peer {index}"
+    )]
+    UnexpectedLastOwnBlock {
         index: AuthorityIndex,
         block_ref: BlockRef,
     },
@@ -49,6 +64,12 @@ pub enum ConsensusError {
 
     #[error("Too many blocks have been requested from authority {0}")]
     TooManyFetchBlocksRequested(AuthorityIndex),
+
+    #[error("Too many authorities have been provided from authority {0}")]
+    TooManyAuthoritiesProvided(AuthorityIndex),
+
+    #[error("Provided size of highest accepted rounds parameter, {0}, is different than committee size, {1}")]
+    InvalidSizeOfHighestAcceptedRounds(usize, usize),
 
     #[error("Invalid authority index: {index} > {max}")]
     InvalidAuthorityIndex { index: AuthorityIndex, max: usize },
@@ -61,6 +82,9 @@ pub enum ConsensusError {
 
     #[error("Synchronizer for fetching blocks directly from {0} is saturated")]
     SynchronizerSaturated(AuthorityIndex),
+
+    #[error("Block {block_ref:?} rejected: {reason}")]
+    BlockRejected { block_ref: BlockRef, reason: String },
 
     #[error("Ancestor is in wrong position: block {block_authority}, ancestor {ancestor_authority}, position {position}")]
     InvalidAncestorPosition {
@@ -91,12 +115,6 @@ pub enum ConsensusError {
     InvalidBlockTimestamp {
         max_timestamp_ms: u64,
         block_timestamp_ms: u64,
-    },
-
-    #[error("Block at {block_timestamp}ms is too far in the future: {forward_time_drift:?}")]
-    BlockTooFarInFuture {
-        block_timestamp: BlockTimestampMs,
-        forward_time_drift: Duration,
     },
 
     #[error("No available authority to fetch commits")]
@@ -130,7 +148,7 @@ pub enum ConsensusError {
         commit: Box<Commit>,
     },
 
-    #[error("Received unexpected block from from peer {peer}: {requested:?} vs {received:?}")]
+    #[error("Received unexpected block from peer {peer}: {requested:?} vs {received:?}")]
     UnexpectedBlockForCommit {
         peer: AuthorityIndex,
         requested: BlockRef,
@@ -146,8 +164,20 @@ pub enum ConsensusError {
     #[error("Peer {0} is disconnected.")]
     PeerDisconnected(String),
 
-    #[error("Network error: {0:?}")]
-    NetworkError(String),
+    #[error("Network config error: {0:?}")]
+    NetworkConfig(String),
+
+    #[error("Failed to connect as client: {0:?}")]
+    NetworkClientConnection(String),
+
+    #[error("Failed to connect as server: {0:?}")]
+    NetworkServerConnection(String),
+
+    #[error("Failed to send request: {0:?}")]
+    NetworkRequest(String),
+
+    #[error("Request timeout: {0:?}")]
+    NetworkRequestTimeout(String),
 
     #[error("Consensus has shut down!")]
     Shutdown,

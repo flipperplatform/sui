@@ -140,7 +140,7 @@ impl<C> Page<C> {
             (limit, after, None, before) => Page {
                 after,
                 before,
-                limit: limit.unwrap_or(limits.default_page_size),
+                limit: limit.unwrap_or(limits.default_page_size as u64),
                 end: End::Front,
             },
 
@@ -152,11 +152,21 @@ impl<C> Page<C> {
             },
         };
 
-        if page.limit > limits.max_page_size {
+        if page.limit > limits.max_page_size as u64 {
             return Err(Error::PageTooLarge(page.limit, limits.max_page_size).extend());
         }
 
         Ok(page)
+    }
+
+    /// A page that just limits the number of results, without applying any other bounds.
+    pub(crate) fn bounded(limit: u64) -> Self {
+        Page {
+            after: None,
+            before: None,
+            limit,
+            end: End::Front,
+        }
     }
 
     pub(crate) fn after(&self) -> Option<&C> {
@@ -787,7 +797,7 @@ mod tests {
     #[test]
     fn test_err_page_too_big() {
         let config = ServiceConfig::default();
-        let too_big = config.limits.max_page_size + 1;
+        let too_big = config.limits.max_page_size as u64 + 1;
         let err = Page::<JsonCursor<u64>>::from_params(&config, Some(too_big), None, None, None)
             .unwrap_err();
 

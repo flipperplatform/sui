@@ -5,11 +5,12 @@ use crate::{
     diag,
     diagnostics::Diagnostic,
     expansion::ast::{ModuleIdent, Mutability},
+    ice,
     naming::ast::{
         self as N, BlockLabel, Color, MatchArm_, TParamID, Type, Type_, UseFuns, Var, Var_,
     },
     parser::ast::FunctionName,
-    shared::{program_info::FunctionInfo, unique_map::UniqueMap},
+    shared::{ide::IDEAnnotation, program_info::FunctionInfo, unique_map::UniqueMap},
     typing::{
         ast as T,
         core::{self, TParamSubst},
@@ -43,6 +44,7 @@ pub struct ExpandedMacro {
     pub body: Box<N::Exp>,
 }
 
+#[derive(Debug)]
 pub enum EvalStrategy<ByValue, ByName> {
     ByValue(ByValue),
     ByName(ByName),
@@ -59,12 +61,31 @@ pub(crate) fn call(
     args: Vec<Arg>,
     return_type: Type,
 ) -> Option<ExpandedMacro> {
+    let reloc_clever_errors = match &context.macro_expansion[0] {
+        core::MacroExpansion::Call(call) => call.invocation,
+        core::MacroExpansion::Argument { .. } => {
+            context.env.add_diag(ice!((
+                call_loc,
+                "ICE top level macro scope should never be an argument"
+            )));
+            call_loc
+        }
+    };
     let next_color = context.next_variable_color();
     // If none, there is no body to expand, likely because of an error in the macro definition
     let macro_body = context.macro_body(&m, &f)?;
     let macro_info = context.function_info(&m, &f);
+
     let (macro_type_params, macro_params, mut macro_body, return_label, max_color) =
-        match recolor_macro(call_loc, &m, &f, macro_info, macro_body, next_color) {
+        match recolor_macro(
+            reloc_clever_errors,
+            call_loc,
+            &m,
+            &f,
+            macro_info,
+            macro_body,
+            next_color,
+        ) {
             Ok(res) => res,
             Err(None) => {
                 assert!(context.env.has_errors());
@@ -180,6 +201,7 @@ pub(crate) fn call(
 }
 
 fn recolor_macro(
+    reloc_clever_errors: Loc,
     call_loc: Loc,
     _m: &ModuleIdent,
     _f: &FunctionName,
@@ -221,8 +243,14 @@ fn recolor_macro(
         label,
         is_implicit: true,
     };
+    let reloc_clever_errors = Some(reloc_clever_errors);
     let recolor_use_funs = true;
-    let recolor = &mut Recolor::new(color, Some(return_label), recolor_use_funs);
+    let recolor = &mut Recolor::new(
+        reloc_clever_errors,
+        color,
+        Some(return_label),
+        recolor_use_funs,
+    );
     recolor.add_params(parameters);
     let parameters = parameters
         .iter()
@@ -279,11 +307,14 @@ mod recolor_struct {
         expansion::ast::Mutability,
         naming::ast::{self as N, BlockLabel, Color, Var},
     };
+    use move_ir_types::location::Loc;
     use std::collections::{BTreeMap, BTreeSet};
+
     // handles all of the recoloring of variables, labels, and use funs.
     // The mask of known vars and labels is here to handle the case where a variable was captured
     // by a lambda
     pub(super) struct Recolor {
+        clever_error_loc: Option<Loc>,
         next_color: Color,
         remapping: BTreeMap<Color, Color>,
         recolor_use_funs: bool,
@@ -293,8 +324,14 @@ mod recolor_struct {
     }
 
     impl Recolor {
-        pub fn new(color: u16, return_label: Option<BlockLabel>, recolor_use_funs: bool) -> Self {
+        pub fn new(
+            reloc_clever_errors: Option<Loc>,
+            color: u16,
+            return_label: Option<BlockLabel>,
+            recolor_use_funs: bool,
+        ) -> Self {
             Self {
+                clever_error_loc: reloc_clever_errors,
                 next_color: color,
                 remapping: BTreeMap::new(),
                 recolor_use_funs,
@@ -302,6 +339,10 @@ mod recolor_struct {
                 vars: BTreeSet::new(),
                 block_labels: BTreeSet::new(),
             }
+        }
+
+        pub fn clever_error_loc(&self) -> Option<Loc> {
+            self.clever_error_loc
         }
 
         pub fn add_params(&mut self, params: &[(Mutability, Var, N::Type)]) {
@@ -319,6 +360,7 @@ mod recolor_struct {
         pub fn add_lvalue(&mut self, sp!(_, lvalue_): &N::LValue) {
             match lvalue_ {
                 N::LValue_::Ignore => (),
+                N::LValue_::Error => (),
                 N::LValue_::Var { var, .. } => {
                     self.vars.insert(*var);
                 }
@@ -385,6 +427,12 @@ mod recolor_struct {
         pub fn contains_block_label(&self, label: &BlockLabel) -> bool {
             self.block_labels.contains(label)
         }
+    }
+}
+
+fn reloc_error_constant(ctx: &mut Recolor, line_number_loc: &mut Loc) {
+    if let Some(clever_error_loc) = ctx.clever_error_loc() {
+        *line_number_loc = clever_error_loc
     }
 }
 
@@ -460,6 +508,7 @@ fn recolor_lvalues(ctx: &mut Recolor, lvalues: &mut N::LValueList) {
 fn recolor_lvalue(ctx: &mut Recolor, sp!(_, lvalue_): &mut N::LValue) {
     match lvalue_ {
         N::LValue_::Ignore => (),
+        N::LValue_::Error => (),
         N::LValue_::Var { var, .. } => recolor_var(ctx, var),
         N::LValue_::Unpack(_, _, _, lvalues) => {
             for (_, _, (_, lvalue)) in lvalues {
@@ -472,7 +521,8 @@ fn recolor_lvalue(ctx: &mut Recolor, sp!(_, lvalue_): &mut N::LValue) {
 #[growing_stack]
 fn recolor_exp(ctx: &mut Recolor, sp!(_, e_): &mut N::Exp) {
     match e_ {
-        N::Exp_::Value(_) | N::Exp_::Constant(_, _) | N::Exp_::ErrorConstant => (),
+        N::Exp_::ErrorConstant { line_number_loc } => reloc_error_constant(ctx, line_number_loc),
+        N::Exp_::Value(_) | N::Exp_::Constant(_, _) => (),
         N::Exp_::Give(_usage, label, e) => {
             recolor_block_label(ctx, label);
             recolor_exp(ctx, e)
@@ -630,7 +680,9 @@ fn recolor_exp(ctx: &mut Recolor, sp!(_, e_): &mut N::Exp) {
 fn recolor_exp_dotted(ctx: &mut Recolor, sp!(_, ed_): &mut N::ExpDotted) {
     match ed_ {
         N::ExpDotted_::Exp(e) => recolor_exp(ctx, e),
-        N::ExpDotted_::Dot(ed, _) => recolor_exp_dotted(ctx, ed),
+        N::ExpDotted_::Dot(ed, _) | N::ExpDotted_::DotAutocomplete(_, ed) => {
+            recolor_exp_dotted(ctx, ed)
+        }
         N::ExpDotted_::Index(ed, sp!(_, es)) => {
             recolor_exp_dotted(ctx, ed);
             for e in es {
@@ -641,24 +693,25 @@ fn recolor_exp_dotted(ctx: &mut Recolor, sp!(_, ed_): &mut N::ExpDotted) {
 }
 
 fn recolor_pat(ctx: &mut Recolor, sp!(_, p_): &mut N::MatchPattern) {
+    use N::MatchPattern_ as MP;
     match p_ {
-        N::MatchPattern_::Literal(_) | N::MatchPattern_::Wildcard | N::MatchPattern_::ErrorPat => {}
-        N::MatchPattern_::Variant(_, _, _, _, fields) => {
+        MP::Constant(_, _) | MP::Literal(_) | MP::Wildcard | MP::ErrorPat => {}
+        MP::Variant(_, _, _, _, fields) => {
             for (_, _, (_, p)) in fields {
                 recolor_pat(ctx, p)
             }
         }
-        N::MatchPattern_::Struct(_, _, _, fields) => {
+        MP::Struct(_, _, _, fields) => {
             for (_, _, (_, p)) in fields {
                 recolor_pat(ctx, p)
             }
         }
-        N::MatchPattern_::Binder(_mut, var, _) => recolor_var(ctx, var),
-        N::MatchPattern_::Or(lhs, rhs) => {
+        MP::Binder(_mut, var, _) => recolor_var(ctx, var),
+        MP::Or(lhs, rhs) => {
             recolor_pat(ctx, lhs);
             recolor_pat(ctx, rhs);
         }
-        N::MatchPattern_::At(var, _unused_var, inner) => {
+        MP::At(var, _unused_var, inner) => {
             recolor_var(ctx, var);
             recolor_pat(ctx, inner);
         }
@@ -734,6 +787,7 @@ fn lvalues(context: &mut Context, sp!(_, lvs_): &mut N::LValueList) {
 fn lvalue(context: &mut Context, sp!(_, lv_): &mut N::LValue) {
     match lv_ {
         N::LValue_::Ignore => (),
+        N::LValue_::Error => (),
         N::LValue_::Var {
             var: sp!(_, v_), ..
         } => {
@@ -763,7 +817,7 @@ fn exp(context: &mut Context, sp!(eloc, e_): &mut N::Exp) {
         | N::Exp_::Constant(_, _)
         | N::Exp_::Continue(_)
         | N::Exp_::Unit { .. }
-        | N::Exp_::ErrorConstant
+        | N::Exp_::ErrorConstant { .. }
         | N::Exp_::UnresolvedError => (),
         N::Exp_::Give(_, _, e)
         | N::Exp_::Return(e)
@@ -935,8 +989,10 @@ fn exp(context: &mut Context, sp!(eloc, e_): &mut N::Exp) {
             ) = context.lambdas.get(v_).unwrap().clone();
             // recolor in case the lambda is used more than once
             let next_color = context.core.next_variable_color();
+            let reloc_clever_errors = None;
             let recolor_use_funs = false;
             let recolor = &mut Recolor::new(
+                reloc_clever_errors,
                 next_color,
                 /* return already labeled */ None,
                 recolor_use_funs,
@@ -996,11 +1052,19 @@ fn exp(context: &mut Context, sp!(eloc, e_): &mut N::Exp) {
                 })
                 .collect();
             result.push_back(sp(body_loc, N::SequenceItem_::Seq(labeled_body)));
-            *e_ = N::Exp_::Block(N::Block {
+
+            let block = N::Exp_::Block(N::Block {
                 name: None,
                 from_macro_argument: None,
                 seq: (N::UseFuns::new(context.macro_color), result),
             });
+            if context.core.env.ide_mode() {
+                context
+                    .core
+                    .env
+                    .add_ide_annotation(*eloc, IDEAnnotation::ExpandedLambda);
+            }
+            *e_ = block;
         }
 
         ///////
@@ -1011,8 +1075,10 @@ fn exp(context: &mut Context, sp!(eloc, e_): &mut N::Exp) {
             let (mut arg, expected_ty) = context.by_name_args.get(v_).cloned().unwrap();
             // recolor the arg in case it is used more than once
             let next_color = context.core.next_variable_color();
+            let reloc_clever_errors = None;
             let recolor_use_funs = false;
             let recolor = &mut Recolor::new(
+                reloc_clever_errors,
                 next_color,
                 /* return already labeled */ None,
                 recolor_use_funs,
@@ -1093,7 +1159,9 @@ fn builtin_function(context: &mut Context, sp!(_, bf_): &mut N::BuiltinFunction)
 fn exp_dotted(context: &mut Context, sp!(_, ed_): &mut N::ExpDotted) {
     match ed_ {
         N::ExpDotted_::Exp(e) => exp(context, e),
-        N::ExpDotted_::Dot(ed, _) => exp_dotted(context, ed),
+        N::ExpDotted_::Dot(ed, _) | N::ExpDotted_::DotAutocomplete(_, ed) => {
+            exp_dotted(context, ed)
+        }
         N::ExpDotted_::Index(ed, sp!(_, es)) => {
             exp_dotted(context, ed);
             for e in es {
@@ -1110,9 +1178,10 @@ fn exps(context: &mut Context, es: &mut [N::Exp]) {
 }
 
 fn pat(context: &mut Context, sp!(_, p_): &mut N::MatchPattern) {
+    use N::MatchPattern_ as MP;
     match p_ {
-        N::MatchPattern_::Literal(_) | N::MatchPattern_::Wildcard | N::MatchPattern_::ErrorPat => {}
-        N::MatchPattern_::Variant(_, _, _, tys_opt, fields) => {
+        MP::Constant(_, _) | MP::Literal(_) | MP::Wildcard | MP::ErrorPat => {}
+        MP::Variant(_, _, _, tys_opt, fields) => {
             if let Some(tys) = tys_opt {
                 types(context, tys)
             }
@@ -1120,7 +1189,7 @@ fn pat(context: &mut Context, sp!(_, p_): &mut N::MatchPattern) {
                 pat(context, p)
             }
         }
-        N::MatchPattern_::Struct(_, _, tys_opt, fields) => {
+        MP::Struct(_, _, tys_opt, fields) => {
             if let Some(tys) = tys_opt {
                 types(context, tys)
             }
@@ -1128,20 +1197,20 @@ fn pat(context: &mut Context, sp!(_, p_): &mut N::MatchPattern) {
                 pat(context, p)
             }
         }
-        N::MatchPattern_::Binder(_mut, var, _) => {
+        MP::Binder(_mut, var, _) => {
             if context.all_params.contains_key(&var.value) {
                 assert!(
                     context.core.env.has_errors(),
                     "ICE cannot use macro parameter in pattern"
                 );
-                *p_ = N::MatchPattern_::ErrorPat;
+                *p_ = MP::ErrorPat;
             }
         }
-        N::MatchPattern_::Or(lhs, rhs) => {
+        MP::Or(lhs, rhs) => {
             pat(context, lhs);
             pat(context, rhs);
         }
-        N::MatchPattern_::At(var, _unused_var, inner) => {
+        MP::At(var, _unused_var, inner) => {
             if context.all_params.contains_key(&var.value) {
                 assert!(
                     context.core.env.has_errors(),

@@ -7,7 +7,8 @@ use crate::p2p::P2pConfig;
 use crate::transaction_deny_config::TransactionDenyConfig;
 use crate::Config;
 use anyhow::Result;
-use narwhal_config::Parameters as ConsensusParameters;
+use consensus_config::Parameters as ConsensusParameters;
+use narwhal_config::Parameters as NarwhalParameters;
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::usize;
 use sui_keys::keypair_file::{read_authority_keypair_from_file, read_keypair_from_file};
-use sui_protocol_config::{Chain, SupportedProtocolVersions};
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::committee::EpochId;
 use sui_types::crypto::AuthorityPublicKeyBytes;
@@ -28,6 +28,7 @@ use sui_types::crypto::KeypairTraits;
 use sui_types::crypto::NetworkKeyPair;
 use sui_types::crypto::SuiKeyPair;
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
+use sui_types::supported_protocol_versions::{Chain, SupportedProtocolVersions};
 use sui_types::traffic_control::{PolicyConfig, RemoteFirewallConfig};
 
 use sui_types::crypto::{get_key_pair_from_rng, AccountKeyPair, AuthorityKeyPair};
@@ -73,16 +74,18 @@ pub struct NodeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub consensus_config: Option<ConsensusConfig>,
 
-    // TODO: Remove this as it's no longer used.
-    #[serde(default)]
-    pub enable_event_processing: bool,
-
     #[serde(default = "default_enable_index_processing")]
     pub enable_index_processing: bool,
 
-    // only alow websocket connections for jsonrpc traffic
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_deprecated_tables: bool,
+
     #[serde(default)]
-    pub websocket_only: bool,
+    /// Determines the jsonrpc server type as either:
+    /// - 'websocket' for a websocket based service (deprecated)
+    /// - 'http' for an http based service
+    /// - 'both' for both a websocket and http based service (deprecated)
+    pub jsonrpc_server_type: Option<ServerType>,
 
     #[serde(default)]
     pub grpc_load_shed: Option<bool>,
@@ -179,6 +182,38 @@ pub struct NodeConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub firewall_config: Option<RemoteFirewallConfig>,
+
+    #[serde(default)]
+    pub execution_cache: ExecutionCacheConfig,
+
+    // step 1 in removing the old state accumulator
+    #[serde(skip)]
+    #[serde(default = "bool_true")]
+    pub state_accumulator_v2: bool,
+
+    #[serde(default = "bool_true")]
+    pub enable_soft_bundle: bool,
+
+    #[serde(default = "bool_true")]
+    pub enable_validator_tx_finalizer: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutionCacheConfig {
+    #[default]
+    PassthroughCache,
+    WritebackCache {
+        max_cache_size: Option<usize>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerType {
+    WebSocket,
+    Http,
+    Both,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -201,6 +236,11 @@ pub fn default_zklogin_oauth_providers() -> BTreeMap<Chain, BTreeSet<String>> {
         "Apple".to_string(),
         "Slack".to_string(),
         "TestIssuer".to_string(),
+        "Microsoft".to_string(),
+        "KarrierOne".to_string(),
+        "Credenza3".to_string(),
+        "AwsTenant-region:us-east-1-tenant_id:us-east-1_LPSLCkC3A".to_string(),
+        "AwsTenant-region:us-east-1-tenant_id:us-east-1_qPsZxYqd8".to_string(),
     ]);
     let providers = BTreeSet::from([
         "Google".to_string(),
@@ -267,6 +307,10 @@ pub fn default_end_of_epoch_broadcast_channel_capacity() -> usize {
 
 pub fn bool_true() -> bool {
     true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 impl Config for NodeConfig {}
@@ -348,6 +392,10 @@ impl NodeConfig {
             })
             .collect()
     }
+
+    pub fn jsonrpc_server_type(&self) -> ServerType {
+        self.jsonrpc_server_type.unwrap_or(ServerType::Http)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -361,12 +409,8 @@ pub enum ConsensusProtocol {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ConsensusConfig {
-    pub address: Multiaddr,
+    // Base consensus DB path for all epochs.
     pub db_path: PathBuf,
-
-    /// Optional alternative address preferentially used by a primary to talk to its own worker.
-    /// For example, this could be used to connect to co-located workers over a private LAN address.
-    pub internal_worker_address: Option<Multiaddr>,
 
     /// Maximum number of pending transactions to submit to consensus, including those
     /// in submission wait.
@@ -383,12 +427,11 @@ pub struct ConsensusConfig {
     /// on consensus latency estimates.
     pub submit_delay_step_override_millis: Option<u64>,
 
-    pub narwhal_config: ConsensusParameters,
+    // Deprecated: Narwhal specific configs.
+    pub address: Multiaddr,
+    pub narwhal_config: NarwhalParameters,
 
-    /// The choice of consensus protocol to run. We default to Narwhal.
-    #[serde(skip)]
-    #[serde(default = "default_consensus_protocol")]
-    pub protocol: ConsensusProtocol,
+    pub parameters: Option<ConsensusParameters>,
 }
 
 impl ConsensusConfig {
@@ -409,13 +452,9 @@ impl ConsensusConfig {
             .map(Duration::from_millis)
     }
 
-    pub fn narwhal_config(&self) -> &ConsensusParameters {
+    pub fn narwhal_config(&self) -> &NarwhalParameters {
         &self.narwhal_config
     }
-}
-
-pub fn default_consensus_protocol() -> ConsensusProtocol {
-    ConsensusProtocol::Narwhal
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -543,7 +582,7 @@ impl Default for CheckpointExecutorConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct AuthorityStorePruningConfig {
     /// number of the latest epoch dbs to retain
@@ -578,7 +617,7 @@ pub struct AuthorityStorePruningConfig {
     /// disables object tombstone pruning. We don't serialize it if it is the default value, false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub killswitch_tombstone_pruning: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default = "default_smoothing", skip_serializing_if = "is_true")]
     pub smooth: bool,
 }
 
@@ -598,6 +637,10 @@ fn default_max_checkpoints_in_batch() -> usize {
     10
 }
 
+fn default_smoothing() -> bool {
+    cfg!(not(test))
+}
+
 impl Default for AuthorityStorePruningConfig {
     fn default() -> Self {
         Self {
@@ -610,7 +653,7 @@ impl Default for AuthorityStorePruningConfig {
             periodic_compaction_threshold_days: None,
             num_epochs_to_retain_for_checkpoints: if cfg!(msim) { Some(2) } else { None },
             killswitch_tombstone_pruning: false,
-            smooth: false,
+            smooth: true,
         }
     }
 }

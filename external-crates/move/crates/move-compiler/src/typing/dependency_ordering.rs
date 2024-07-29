@@ -261,9 +261,14 @@ fn module(context: &mut Context, mident: ModuleIdent, mdef: &T::ModuleDefinition
 //**************************************************************************************************
 
 fn function(context: &mut Context, fdef: &T::Function) {
-    function_signature(context, &fdef.signature);
-    if let T::FunctionBody_::Defined(seq) = &fdef.body.value {
-        sequence(context, seq)
+    match &fdef.body.value {
+        T::FunctionBody_::Defined(seq) => {
+            function_signature(context, &fdef.signature);
+            sequence(context, seq)
+        }
+        T::FunctionBody_::Native => function_signature(context, &fdef.signature),
+        // macros do not add dependencies
+        T::FunctionBody_::Macro => (),
     }
 }
 
@@ -485,11 +490,12 @@ fn exp(context: &mut Context, e: &T::Exp) {
         | E::Constant(..)
         | E::Continue(_)
         | E::BorrowLocal(..)
-        | E::ErrorConstant(_)
+        | E::ErrorConstant { .. }
         | E::UnresolvedError => (),
     }
 }
 
+#[growing_stack]
 fn pat(context: &mut Context, p: &T::MatchPattern) {
     use T::UnannotatedPat_ as P;
     match &p.pat.value {
@@ -508,6 +514,6 @@ fn pat(context: &mut Context, p: &T::MatchPattern) {
             pat(context, lhs);
             pat(context, rhs);
         }
-        P::Wildcard | P::ErrorPat | P::Binder(_, _) | P::Literal(_) => (),
+        P::Constant(_, _) | P::Wildcard | P::ErrorPat | P::Binder(_, _) | P::Literal(_) => (),
     }
 }

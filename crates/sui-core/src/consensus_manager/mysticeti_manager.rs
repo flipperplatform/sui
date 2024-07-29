@@ -5,16 +5,18 @@ use std::{path::PathBuf, sync::Arc};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use consensus_config::{Committee, NetworkKeyPair, Parameters, ProtocolKeyPair};
-use consensus_core::{CommitConsumer, CommitIndex, ConsensusAuthority, NetworkType, Round};
+use consensus_core::{CommitConsumer, CommitIndex, ConsensusAuthority, Round};
 use fastcrypto::ed25519;
-use mysten_metrics::{RegistryID, RegistryService};
+use mysten_metrics::{monitored_mpsc::unbounded_channel, RegistryID, RegistryService};
 use narwhal_executor::ExecutionState;
 use prometheus::Registry;
 use sui_config::NodeConfig;
+use sui_protocol_config::ConsensusNetwork;
 use sui_types::{
     committee::EpochId, sui_system_state::epoch_start_sui_system_state::EpochStartSystemStateTrait,
 };
-use tokio::sync::{mpsc::unbounded_channel, Mutex};
+use tokio::sync::Mutex;
+use tracing::info;
 
 use crate::{
     authority::authority_per_epoch_store::AuthorityPerEpochStore,
@@ -70,11 +72,26 @@ impl MysticetiManager {
         }
     }
 
-    #[allow(unused)]
     fn get_store_path(&self, epoch: EpochId) -> PathBuf {
         let mut store_path = self.storage_base_path.clone();
         store_path.push(format!("{}", epoch));
         store_path
+    }
+
+    fn pick_network(&self, epoch_store: &AuthorityPerEpochStore) -> ConsensusNetwork {
+        if let Ok(type_str) = std::env::var("CONSENSUS_NETWORK") {
+            match type_str.to_lowercase().as_str() {
+                "anemo" => return ConsensusNetwork::Anemo,
+                "tonic" => return ConsensusNetwork::Tonic,
+                _ => {
+                    info!(
+                        "Invalid consensus network type {} in env var. Continue to use the value from protocol config.",
+                        type_str
+                    );
+                }
+            }
+        }
+        epoch_store.protocol_config().consensus_network()
     }
 }
 
@@ -82,7 +99,7 @@ impl MysticetiManager {
 impl ConsensusManagerTrait for MysticetiManager {
     async fn start(
         &self,
-        _config: &NodeConfig,
+        config: &NodeConfig,
         epoch_store: Arc<AuthorityPerEpochStore>,
         consensus_handler_initializer: ConsensusHandlerInitializer,
         tx_validator: SuiTxValidator,
@@ -91,14 +108,7 @@ impl ConsensusManagerTrait for MysticetiManager {
         let committee: Committee = system_state.get_mysticeti_committee();
         let epoch = epoch_store.epoch();
         let protocol_config = epoch_store.protocol_config();
-        let network_type = match std::env::var("CONSENSUS_NETWORK") {
-            Ok(type_str) => match type_str.to_lowercase().as_str() {
-                "tonic" => NetworkType::Tonic,
-                "anemo" => NetworkType::Anemo,
-                _ => NetworkType::Anemo,
-            },
-            Err(_) => NetworkType::Anemo,
-        };
+        let network_type = self.pick_network(&epoch_store);
 
         let Some(_guard) = RunningLockGuard::acquire_start(
             &self.metrics,
@@ -111,10 +121,12 @@ impl ConsensusManagerTrait for MysticetiManager {
             return;
         };
 
-        // TODO(mysticeti): Fill in the other fields
+        let consensus_config = config
+            .consensus_config()
+            .expect("consensus_config should exist");
         let parameters = Parameters {
-            db_path: Some(self.get_store_path(epoch)),
-            ..Default::default()
+            db_path: self.get_store_path(epoch),
+            ..consensus_config.parameters.clone().unwrap_or_default()
         };
 
         let own_protocol_key = self.protocol_keypair.public();
@@ -125,10 +137,7 @@ impl ConsensusManagerTrait for MysticetiManager {
 
         let registry = Registry::new_custom(Some("consensus".to_string()), None).unwrap();
 
-        // TODO: that should be replaced by a metered channel. We can discuss if unbounded approach
-        // is the one we want to go with.
-        #[allow(clippy::disallowed_methods)]
-        let (commit_sender, commit_receiver) = unbounded_channel();
+        let (commit_sender, commit_receiver) = unbounded_channel("consensus_output");
 
         let consensus_handler = consensus_handler_initializer.new_consensus_handler();
         let consumer = CommitConsumer::new(

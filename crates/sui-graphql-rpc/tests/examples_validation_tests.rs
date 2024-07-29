@@ -14,6 +14,7 @@ mod tests {
     use sui_graphql_rpc::examples::{load_examples, ExampleQuery, ExampleQueryGroup};
     use sui_graphql_rpc::test_infra::cluster::ExecutorCluster;
     use sui_graphql_rpc::test_infra::cluster::DEFAULT_INTERNAL_DATA_SOURCE_PORT;
+    use tempfile::tempdir;
 
     fn bad_examples() -> ExampleQueryGroup {
         ExampleQueryGroup {
@@ -102,18 +103,19 @@ mod tests {
     #[serial]
     async fn test_single_all_examples_structure_valid() {
         let rng = StdRng::from_seed([12; 32]);
+        let data_ingestion_path = tempdir().unwrap().into_path();
         let mut sim = Simulacrum::new_with_rng(rng);
         let (mut max_nodes, mut max_output_nodes, mut max_depth, mut max_payload) = (0, 0, 0, 0);
 
+        sim.set_data_ingestion_path(data_ingestion_path.clone());
         sim.create_checkpoint();
 
-        let connection_config = ConnectionConfig::ci_integration_test_cfg();
-
         let cluster = sui_graphql_rpc::test_infra::cluster::serve_executor(
-            connection_config,
+            ConnectionConfig::default(),
             DEFAULT_INTERNAL_DATA_SOURCE_PORT,
             Arc::new(sim),
             None,
+            data_ingestion_path,
         )
         .await;
 
@@ -142,7 +144,7 @@ mod tests {
             default_config.max_query_nodes
         );
         assert!(
-            max_output_nodes <= default_config.max_output_nodes,
+            max_output_nodes <= default_config.max_output_nodes as u64,
             "Max output nodes {} exceeds default limit {}",
             max_output_nodes,
             default_config.max_output_nodes
@@ -167,18 +169,19 @@ mod tests {
     #[serial]
     async fn test_bad_examples_fail() {
         let rng = StdRng::from_seed([12; 32]);
+        let data_ingestion_path = tempdir().unwrap().into_path();
         let mut sim = Simulacrum::new_with_rng(rng);
         let (mut max_nodes, mut max_output_nodes, mut max_depth, mut max_payload) = (0, 0, 0, 0);
+        sim.set_data_ingestion_path(data_ingestion_path.clone());
 
         sim.create_checkpoint();
 
-        let connection_config = ConnectionConfig::ci_integration_test_cfg();
-
         let cluster = sui_graphql_rpc::test_infra::cluster::serve_executor(
-            connection_config,
+            ConnectionConfig::default(),
             DEFAULT_INTERNAL_DATA_SOURCE_PORT,
             Arc::new(sim),
             None,
+            data_ingestion_path,
         )
         .await;
 

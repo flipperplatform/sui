@@ -43,6 +43,7 @@ feature_flags:
   enable_coin_deny_list: true
   enable_group_ops_native_functions: true
   reject_mutable_random_on_entry_functions: true
+  consensus_choice: SwapEachEpoch
   zklogin_max_epoch_upper_bound_delta: 30
 max_tx_size_bytes: 131072
 max_input_objects: 2048
@@ -254,8 +255,6 @@ hmac_hmac_sha3_256_input_cost_per_byte: 2
 hmac_hmac_sha3_256_input_cost_per_block: 2
 check_zklogin_id_cost_base: 200
 check_zklogin_issuer_cost_base: 200
-scoring_decision_mad_divisor: 2.3
-scoring_decision_cutoff_value: 2.5
 execution_version: 3
 consensus_bad_nodes_stake_threshold: 20
 max_jwk_votes_per_validator_per_epoch: 240

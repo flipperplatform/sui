@@ -4,7 +4,7 @@
 module sui_system::sui_system_state_inner {
     use sui::balance::{Self, Balance};
     use sui::coin::Coin;
-    use sui_system::staking_pool::{stake_activation_epoch, StakedSui};
+    use sui_system::staking_pool::StakedSui;
     use sui::sui::SUI;
     use sui_system::validator::{Self, Validator};
     use sui_system::validator_set::{Self, ValidatorSet};
@@ -214,7 +214,6 @@ module sui_system::sui_system_state_inner {
     const ECannotReportOneself: u64 = 3;
     const EReportRecordNotFound: u64 = 4;
     const EBpsTooLarge: u64 = 5;
-    const EStakeWithdrawBeforeActivation: u64 = 6;
     const ESafeModeGasNotProcessed: u64 = 7;
     const EAdvancedToWrongEpoch: u64 = 8;
 
@@ -516,10 +515,6 @@ module sui_system::sui_system_state_inner {
         staked_sui: StakedSui,
         ctx: &TxContext,
     ) : Balance<SUI> {
-        assert!(
-            stake_activation_epoch(&staked_sui) <= ctx.epoch(),
-            EStakeWithdrawBeforeActivation
-        );
         self.validators.request_withdraw_stake(staked_sui, ctx)
     }
 
@@ -982,6 +977,19 @@ module sui_system::sui_system_state_inner {
     /// Aborts if `validator_addr` is not an active validator.
     public(package) fun validator_stake_amount(self: &SuiSystemStateInnerV2, validator_addr: address): u64 {
         self.validators.validator_total_stake_amount(validator_addr)
+    }
+
+    /// Returns the voting power for `validator_addr`.
+    /// Aborts if `validator_addr` is not an active validator.
+    public(package) fun active_validator_voting_powers(self: &SuiSystemStateInnerV2): VecMap<address, u64> {
+        let mut active_validators = active_validator_addresses(self);
+        let mut voting_powers = vec_map::empty();
+        while (!vector::is_empty(&active_validators)) {
+            let validator = vector::pop_back(&mut active_validators);
+            let voting_power = validator_set::validator_voting_power(&self.validators, validator);
+            vec_map::insert(&mut voting_powers, validator, voting_power);
+        };
+        voting_powers
     }
 
     /// Returns the staking pool id of a given validator.
