@@ -6,6 +6,7 @@ network-address: "/dns/localhost/tcp/8080/http"
 metrics-address: "0.0.0.0:9184"
 # this address is also used for web socket connections
 json-rpc-address: "0.0.0.0:9000"
+websocket-address: "0.0.0.0:9001"
 enable-event-processing: true
 enable-index-processing: true
 enable-experimental-rest-api: true
@@ -50,3 +51,14 @@ p2p-config:
       peer-id: fadb7ccb0b7fc99223419176e707f5122fef4ea686eb8e80d1778588bf5a0bcd
     - address: /dns/ssn02.mainnet.sui.rpcpool.com/udp/8084
       peer-id: 13783584a90025b87d4604f1991252221e5fd88cab40001642f4b00111ae9b7e
+
+state-archive-read-config:
+  - object-store-config:
+      object-store: "S3"
+      bucket: "mysten-mainnet-archives"
+      aws-access-key-id: "AKIAY3756ZJAWO6NZAMF"
+      aws-secret-access-key: "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"
+      aws-region: "us-west-2"
+      object-store-connection-limit: 20
+    concurrency: 5
+    use-for-pruning-watermark: false
