@@ -69,6 +69,8 @@ pub struct IndexerConfig {
     pub rpc_client_url: String,
     #[clap(long, default_value = Some("https://checkpoints.mainnet.sui.io"), global = true)]
     pub remote_store_url: Option<String>,
+    #[clap(long, default_value = Some("https://checkpoints.mainnet.sui.io"), global = true)]
+    pub remote_store_url: Option<String>,
     #[clap(long, default_value = "0.0.0.0", global = true)]
     pub client_metric_host: String,
     #[clap(long, default_value = "9184", global = true)]
@@ -135,6 +137,7 @@ impl Default for IndexerConfig {
             db_port: None,
             db_name: None,
             rpc_client_url: "http://127.0.0.1:9000".to_string(),
+            remote_store_url: Some("https://checkpoints.mainnet.sui.io".to_string()),
             remote_store_url: Some("https://checkpoints.mainnet.sui.io".to_string()),
             client_metric_host: "0.0.0.0".to_string(),
             client_metric_port: 9184,

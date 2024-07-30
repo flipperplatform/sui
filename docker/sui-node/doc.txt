@@ -1,0 +1,23 @@
+# Production Image
+FROM debian:bullseye-slim AS runtime
+# Use jemalloc as memory allocator
+RUN apt-get update && apt-get install -y libjemalloc-dev ca-certificates curl
+ENV LD_PRELOAD /usr/lib/x86_64-linux-gnu/libjemalloc.so
+
+# Set up the working directory
+WORKDIR "$WORKDIR/sui"
+
+RUN ls -la
+# Copy the locally built binary from your build context into the Docker image
+COPY ./bin/sui-node /opt/sui/bin/sui-node
+# Also copy to /usr/local/bin for easy execution
+COPY ./bin/sui-node /usr/local/bin/sui-node
+
+RUN chmod +x /opt/sui/bin/sui-node
+RUN chmod +x /usr/local/bin/sui-node
+
+
+ARG BUILD_DATE
+ARG GIT_REVISION
+LABEL build-date=$BUILD_DATE
+LABEL git-revision=$GIT_REVISION

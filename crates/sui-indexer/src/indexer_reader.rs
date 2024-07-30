@@ -947,12 +947,21 @@ impl<U: R2D2Connection> IndexerReader<U> {
     }
 
     async fn multi_get_transaction_block_response_by_sequence_numbers_in_blocking_task(
+    async fn multi_get_transaction_block_response_by_sequence_numbers_in_blocking_task(
         &self,
         tx_sequence_numbers: Vec<i64>,
         options: sui_json_rpc_types::SuiTransactionBlockResponseOptions,
         // Some(true) for desc, Some(false) for asc, None for undefined order
         is_descending: Option<bool>,
     ) -> Result<Vec<sui_json_rpc_types::SuiTransactionBlockResponse>, IndexerError> {
+        let stored_txes: Vec<StoredTransaction> = self
+            .spawn_blocking(move |this| {
+                this.multi_get_transactions_with_sequence_numbers(
+                    tx_sequence_numbers,
+                    is_descending,
+                )
+            })
+            .await?;
         let stored_txes: Vec<StoredTransaction> = self
             .spawn_blocking(move |this| {
                 this.multi_get_transactions_with_sequence_numbers(

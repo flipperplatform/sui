@@ -23,6 +23,7 @@ services:
     volumes:
       - ./fullnode:/opt/sui
     ports:
+      - 9001
       - 9000
       - 9184
       - target: 8084
@@ -43,28 +44,38 @@ services:
     environment:
       - RUST_LOG="info"
       - RUST_JSON_LOG="true"
-      - DATABASE_URL=postgres://postgres:admin@postgres:5432/sui_indexer_testnet
+      - DATABASE_URL=postgres://postgres:tonvyn-cyMvot-dybbo6@10.112.144.2:5432/sui_mainnet_indexer
       - RPC_CLIENT_URL=http://fullnode:9000
     ports:
       - target: 9000
-        published: 9000
+        published: 9001
         protocol: tcp
-      - 9184
+      - target: 9184
+        published: 9185
+        protocol: tcp
     depends_on:
-      - postgres
       - fullnode
 
-  postgres:
-    image: postgres:15
+  indexer-reader:
+    build:
+      context: ../..
+      dockerfile: ./docker/sui-indexer/Dockerfile
+    image: sui-indexer:latest
+    command: /opt/sui/indexer-reader.sh
     restart: unless-stopped
-    environment:
-      - POSTGRES_PASSWORD=admin
-    ports:
-      - target: 5432
-        published: 5432
     volumes:
-      - ./postgres/data:/var/lib/postgresql/data
-networks:
-  networkName:
-    driver: bridge
-
+      - ./indexer:/opt/sui
+    environment:
+      - RUST_LOG="info"
+      - RUST_JSON_LOG="true"
+      - DATABASE_URL=postgres://postgres:tonvyn-cyMvot-dybbo6@10.112.144.2:5432/sui_mainnet_indexer
+      - RPC_CLIENT_URL=http://fullnode:9000
+    ports:
+      - target: 9000
+        published: 9002
+        protocol: tcp
+      - target: 9184
+        published: 9186
+        protocol: tcp
+    depends_on:
+      - fullnode
