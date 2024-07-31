@@ -56,8 +56,8 @@ state-archive-read-config:
   - object-store-config:
       object-store: "S3"
       bucket: "mysten-mainnet-archives"
-      aws-access-key-id: "AKIAY3756ZJAWO6NZAMF"
-      aws-secret-access-key: "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"
+      aws-access-key-id: ""
+      aws-secret-access-key: ""
       aws-region: "us-west-2"
       object-store-connection-limit: 20
     concurrency: 5
